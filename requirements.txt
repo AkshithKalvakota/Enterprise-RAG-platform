@@ -1,0 +1,26 @@
+# Backend & API
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Frontend
+streamlit
+
+# AI & LangChain Core
+langchain
+langchain-core
+langchain-community
+langchain-google-genai
+
+# Vector Database
+qdrant-client
+
+# Document Parsing & Processing
+PyMuPDF
+python-docx
+python-pptx
+pandas
+openpyxl
+
+# OCR
+easyocr

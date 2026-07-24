@@ -1,0 +1,16 @@
+# Environments
+venv/
+env/
+.env
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# IDEs
+.vscode/
+.idea/
+
+# Uploads
+storage/uploads/*
+!storage/uploads/.gitkeep

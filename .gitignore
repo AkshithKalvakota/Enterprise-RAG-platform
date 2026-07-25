@@ -11,6 +11,8 @@ __pycache__/
 .vscode/
 .idea/
 
-# Uploads
+# Storage & Uploads
+storage/
+!storage/uploads/
 storage/uploads/*
 !storage/uploads/.gitkeep

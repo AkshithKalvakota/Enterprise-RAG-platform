@@ -2,8 +2,8 @@ import streamlit as st
 import requests
 import time
 
-# Backend API Configuration
-API_BASE_URL = "http://localhost:8000/api/v1"
+# Backend API Configuration - Updated to point to your live Render backend
+API_BASE_URL = "https://enterprise-rag-assistant-6n3h.onrender.com/api/v1"
 
 # Configure the Streamlit page
 st.set_page_config(

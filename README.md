@@ -20,8 +20,8 @@ Built with a decoupled microservice architecture, the platform separates a robus
 
 ## 🚀 Live Demo
 
-* **Frontend Web Application (Streamlit):** [Insert your Streamlit Cloud URL here]
-* **Backend API Docs (FastAPI Swagger):** [Insert your Render URL here]/docs
+* **Application Link :** https://enterprise-rag-platform-ip8elc4rcvtw89ssqsuy2s.streamlit.app/
+
 
 ---
 

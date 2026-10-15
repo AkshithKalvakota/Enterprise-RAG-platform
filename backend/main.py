@@ -1,7 +1,13 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from dotenv import load_dotenv
+
 from backend.routes import router as api_router
+from backend.dependencies import get_vector_db
 from utils.logger import setup_logger
+
+# Load environment variables
+load_dotenv()
 
 # Initialize our new enterprise logger
 logger = setup_logger()
@@ -12,7 +18,21 @@ app = FastAPI(
     description="A robust backend for document parsing, vector embedding, and LLM generation."
 )
 
+# ==========================================
+# Startup: build the shared Qdrant + Gemini clients once
+# ==========================================
+@app.on_event("startup")
+def warm_up_clients():
+    try:
+        get_vector_db()
+        logger.info("Successfully connected to Qdrant.")
+    except Exception as e:
+        logger.error(f"Warning: Could not connect to Qdrant on startup. {e}")
+
+
+# ==========================================
 # 1. Global Exception Handler (The Safety Net)
+# ==========================================
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """
@@ -25,7 +45,10 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": "An unexpected server error occurred. Our engineering team has been notified."}
     )
 
+
+# ==========================================
 # 2. Middleware (The Request Tracker)
+# ==========================================
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     """
@@ -40,5 +63,26 @@ async def log_requests(request: Request, call_next):
     logger.info(f"Completed Request: {request.method} {request.url.path} with status code {response.status_code}")
     return response
 
+
+# ==========================================
+# 3. Database Reset Route
+# ==========================================
+@app.delete("/reset")
+def reset_database():
+    """Wipes the Qdrant collection and recreates an empty one."""
+    try:
+        # Uses the same VectorDB (and collection name) that indexing and search use
+        db = get_vector_db()
+        db.reset()
+
+        logger.info(f"Database collection '{db.collection_name}' successfully cleared and recreated.")
+        return {"message": "Database cleared successfully"}
+    except Exception as e:
+        logger.error(f"Failed to reset database: {str(e)}")
+        return {"error": str(e)}
+
+
+# ==========================================
 # Register our API routes
+# ==========================================
 app.include_router(api_router, prefix="/api/v1")

@@ -2,8 +2,15 @@ import streamlit as st
 import requests
 import time
 
-# Backend API Configuration - Updated to point to your live Render backend
+# Backend API Configuration
 API_BASE_URL = "https://enterprise-rag-assistant-6n3h.onrender.com/api/v1"
+ROOT_URL = API_BASE_URL.replace("/api/v1", "")
+
+# Request timeouts in seconds (Render free tier can take ~60s to wake up)
+RESET_TIMEOUT = 90
+UPLOAD_TIMEOUT = 120
+INDEX_TIMEOUT = 300
+QUERY_TIMEOUT = 120
 
 # Configure the Streamlit page
 st.set_page_config(
@@ -36,12 +43,23 @@ with st.sidebar:
         accept_multiple_files=True
     )
     
-    # UI Improvement: Full-width button
     if st.button("Process & Index Documents", type="primary", use_container_width=True):
         if uploaded_files:
-            # UI Improvement: Dynamic Progress Bar
-            progress_bar = st.progress(0, text="Starting ingestion pipeline...")
+            progress_bar = st.progress(0, text="Waking up server and wiping old memory...")
             
+            # ==========================================
+            # THE FIX: WIPE DATABASE RIGHT BEFORE UPLOAD
+            # ==========================================
+            try:
+                # Tell the backend to wipe the database clean
+                requests.delete(f"{ROOT_URL}/reset", timeout=RESET_TIMEOUT)
+                progress_bar.progress(10, text="Database cleared! Preparing new files...")
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+                progress_bar.empty()
+                st.error("🔌 Cannot connect to the backend server. Is FastAPI running?")
+                st.stop()
+            
+            # Continue with the upload process
             files_to_upload = [
                 ("files", (file.name, file.getvalue(), file.type)) 
                 for file in uploaded_files
@@ -49,7 +67,7 @@ with st.sidebar:
             
             try:
                 progress_bar.progress(25, text="Uploading files to server...")
-                upload_response = requests.post(f"{API_BASE_URL}/upload", files=files_to_upload)
+                upload_response = requests.post(f"{API_BASE_URL}/upload", files=files_to_upload, timeout=UPLOAD_TIMEOUT)
                 
                 if upload_response.status_code == 200:
                     saved_filenames = upload_response.json().get("saved_files", [])
@@ -57,25 +75,30 @@ with st.sidebar:
                     index_success_count = 0
                     
                     for i, filename in enumerate(saved_filenames):
-                        # Update progress mathematically based on file count
                         current_progress = 25 + int(((i + 1) / total_files) * 75)
                         progress_bar.progress(current_progress, text=f"Indexing {filename} into vector database...")
                         
-                        index_response = requests.post(f"{API_BASE_URL}/index/{filename}")
+                        index_response = requests.post(f"{API_BASE_URL}/index/{filename}", timeout=INDEX_TIMEOUT)
                         if index_response.status_code == 200:
                             index_success_count += 1
                             
                     progress_bar.progress(100, text="Indexing complete!")
-                    time.sleep(1) # Let the user see 100% for a brief moment
-                    progress_bar.empty() # Clean up the progress bar from the UI
+                    time.sleep(1)
+                    progress_bar.empty() 
                     
-                    # UI Improvement: Sleek Toast notification
+                    # Clear chat history automatically since it's a new document
+                    st.session_state.messages = [
+                        {"role": "assistant", "content": f"Successfully loaded your new document(s). Ask me anything!"}
+                    ]
+                    
                     st.toast(f"✅ Successfully processed {index_success_count} document(s)!", icon="🎉")
+                    time.sleep(1)
+                    st.rerun()
                 else:
                     progress_bar.empty()
                     st.error(f"Failed to upload files: {upload_response.text}")
                     
-            except requests.exceptions.ConnectionError:
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
                 progress_bar.empty()
                 st.error("🔌 Cannot connect to the backend server. Is FastAPI running?")
         else:
@@ -84,11 +107,13 @@ with st.sidebar:
     st.divider()
     
     st.header("⚙️ Settings")
-    if st.button("🗑️ Clear Chat History", use_container_width=True):
-        st.session_state.messages = []
+    if st.button("🧹 Clear Chat History", use_container_width=True):
+        st.session_state.messages = [
+            {"role": "assistant", "content": "Hello! I am your Enterprise AI Assistant. Upload your documents in the sidebar, click **Process & Index**, and ask me anything."}
+        ]
         st.rerun()
 
-# Initialize conversation memory in Streamlit's session state
+# Initialize conversation memory
 if "messages" not in st.session_state or len(st.session_state.messages) == 0:
     st.session_state.messages = [
         {"role": "assistant", "content": "Hello! I am your Enterprise AI Assistant. Upload your documents in the sidebar, click **Process & Index**, and ask me anything."}
@@ -99,18 +124,17 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Chat input box at the bottom of the screen
+# Chat input box
 if prompt := st.chat_input("Ask a question about your documents..."):
     # 1. Display user's prompt in the UI
     with st.chat_message("user"):
         st.markdown(prompt)
         
-    # 2. Save user's prompt to memory
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    # 2. Save user's prompt to memory without using .append()
+    st.session_state.messages = st.session_state.messages + [{"role": "user", "content": prompt}]
     
     # 3. Call the FastAPI /query endpoint with sanitized chat history
     with st.chat_message("assistant"):
-        # UI Improvement: Better thinking spinner
         with st.spinner("🤖 Analyzing documents and generating response..."):
             try:
                 clean_history = []
@@ -126,7 +150,7 @@ if prompt := st.chat_input("Ask a question about your documents..."):
                     "top_k": 5
                 }
                 
-                response = requests.post(f"{API_BASE_URL}/query", json=payload)
+                response = requests.post(f"{API_BASE_URL}/query", json=payload, timeout=QUERY_TIMEOUT)
                 
                 if response.status_code == 200:
                     data = response.json()
@@ -134,14 +158,11 @@ if prompt := st.chat_input("Ask a question about your documents..."):
                     
                     st.markdown(ai_answer)
                                 
-                    # 4. Save assistant response to session state memory
-                    st.session_state.messages.append({
-                        "role": "assistant", 
-                        "content": ai_answer
-                    })
+                    # 4. Save assistant response to memory without using .append()
+                    st.session_state.messages = st.session_state.messages + [{"role": "assistant", "content": ai_answer}]
                 else:
                     error_msg = response.json().get("detail", "Unknown server error")
                     st.error(f"🚨 Error from backend: {error_msg}")
                     
-            except requests.exceptions.ConnectionError:
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
                 st.error("🔌 Cannot connect to the backend server. Make sure FastAPI is running.")

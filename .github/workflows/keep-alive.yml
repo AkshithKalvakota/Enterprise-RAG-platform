@@ -1,0 +1,27 @@
+# Calls the backend's /health route, which queries Qdrant.
+# Free Qdrant Cloud clusters are suspended when idle (and later deleted), which broke the
+# live site once; this keeps the cluster active. If the check fails, the run fails and
+# GitHub emails the repository owner.
+name: Keep Qdrant alive
+
+on:
+  schedule:
+    - cron: "0 3,15 * * *"   # twice a day (03:00 and 15:00 UTC)
+  workflow_dispatch:          # allows running it by hand from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Call /health (retries while Render wakes up)
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            code=$(curl -s -o response.json -w "%{http_code}" --max-time 90 \
+              https://enterprise-rag-assistant-6n3h.onrender.com/api/v1/health || true)
+            echo "Attempt $attempt: HTTP $code $(cat response.json 2>/dev/null)"
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 30
+          done
+          echo "::error::Backend or Qdrant is not healthy. Check the Qdrant Cloud dashboard (cluster may be suspended)."
+          exit 1

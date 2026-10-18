@@ -45,6 +45,20 @@ def _session_file(session_id: str, filename: str) -> str:
 async def get_status():
     return {"status": "ok", "message": "API is live."}
 
+@public_router.get("/health", tags=["System"])
+def get_health():
+    """
+    Checks that Qdrant answers. Called on a schedule by .github/workflows/keep-alive.yml:
+    the request counts as cluster activity (free Qdrant clusters are suspended when idle),
+    and a failure here turns the workflow red so GitHub emails the owner.
+    """
+    try:
+        db = get_vector_db()
+        db.client.count(collection_name=db.collection_name, exact=False)
+        return {"status": "ok", "vector_db": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Vector database unavailable: {str(e)}")
+
 @router.post("/upload", tags=["Document Processing"])
 async def upload_files(files: List[UploadFile] = File(...), session_id: str = Depends(get_session_id)):
     saved_files = []

@@ -177,6 +177,9 @@ This platform is production-ready and deployed across two cloud environments.
 - **Start Command:** `uvicorn backend.main:app --host 0.0.0.0 --port 10000`
 - **Environment Variables:** `GOOGLE_API_KEY`, `QDRANT_URL`, `QDRANT_API_KEY`, `API_KEY`, `LLM_MODEL`
 
+**Keep-alive (GitHub Actions)**
+- `.github/workflows/keep-alive.yml` calls `/api/v1/health` twice a day so the free Qdrant cluster is never idle long enough to be suspended. A failed check fails the run, and GitHub emails the repository owner.
+
 **Frontend (Streamlit Community Cloud)**
 - Deployed directly from the `main` branch
 - Installs `frontend/requirements.txt` (found next to `app.py`)

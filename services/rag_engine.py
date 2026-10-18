@@ -1,7 +1,7 @@
 import re
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from database.vector_store import VectorDB
+from services.llm import build_llm_with_fallback, message_text as _message_text
 from utils import config
 
 NO_DOCUMENTS_MESSAGE = "Please upload and index your documents first."
@@ -9,14 +9,6 @@ LOCATION_KEYS = ("page", "slide", "sheet")
 # Matches the "SOURCES: 1, 3" line the model is asked to end its reply with
 SOURCES_LINE = re.compile(r"\n?\s*SOURCES:\s*(.*)\s*$", re.IGNORECASE)
 SOURCES_MARKER = "SOURCES:"
-
-
-def _message_text(response) -> str:
-    """Gemini 3 can return several content parts; keep all text parts."""
-    content = response.content
-    if isinstance(content, list):
-        return "".join(part.get("text", "") if isinstance(part, dict) else str(part) for part in content)
-    return str(content)
 
 
 def _format_location(metadata: dict) -> str:
@@ -60,31 +52,13 @@ def _split_sources(reply: str, chunk_sources: list) -> tuple:
     return reply.strip(), sources
 
 
-def _build_llm(model: str) -> ChatGoogleGenerativeAI:
-    return ChatGoogleGenerativeAI(
-        model=model,
-        # Gemini 3.x thinks before answering by default; "low" cuts latency a lot
-        # for document lookups. Options: minimal, low, medium, high.
-        thinking_level=config.LLM_THINKING_LEVEL,
-        # Fail fast so the fallback model can take over, instead of retrying for a minute
-        max_retries=config.LLM_MAX_ATTEMPTS,
-        timeout=config.LLM_TIMEOUT_SECONDS,
-    )
-
-
 class RAGEngine:
     """
     A service class that connects our vector database to the Gemini LLM
     and manages conversation history to answer user queries accurately.
     """
     def __init__(self, db: VectorDB):
-        primary = _build_llm(config.LLM_MODEL)
-        # If the primary model is overloaded (503), out of quota (429) or times out,
-        # the same request is sent to the fallback model instead of failing.
-        if config.LLM_FALLBACK_MODEL and config.LLM_FALLBACK_MODEL != config.LLM_MODEL:
-            self.llm = primary.with_fallbacks([_build_llm(config.LLM_FALLBACK_MODEL)])
-        else:
-            self.llm = primary
+        self.llm = build_llm_with_fallback()
         self.db = db
 
     def _standalone_question(self, question: str, history: list) -> str:

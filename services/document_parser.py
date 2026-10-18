@@ -4,10 +4,12 @@ from docx import Document  # python-docx for Word
 from pptx import Presentation  # python-pptx for PowerPoint
 import pandas as pd  # pandas for CSV/Excel
 
+from services.image_reader import IMAGE_MIME_TYPES, read_image  # Gemini Vision for images
+
 class DocumentParser:
     """
     A service class responsible for extracting raw text and metadata
-    from various document formats including PDFs, Word, PPT, Excel, CSV, and TXT.
+    from various document formats including PDFs, Word, PPT, Excel, CSV, TXT and images.
 
     Every parser returns:
         text      - the full extracted text
@@ -39,6 +41,8 @@ class DocumentParser:
             return DocumentParser._parse_csv(file_path)
         elif ext in [".txt", ".md"]:
             return DocumentParser._parse_text(file_path)
+        elif ext in IMAGE_MIME_TYPES:
+            return DocumentParser._parse_image(file_path)
         else:
             # Legacy .doc/.ppt/.xls are binary formats the libraries above cannot read
             raise ValueError(f"Unsupported file format: {ext}")
@@ -109,3 +113,8 @@ class DocumentParser:
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
             text_content = f.read()
         return DocumentParser._result(file_path, "text", [{"text": text_content, "location": {}}])
+
+    @staticmethod
+    def _parse_image(file_path: str) -> dict:
+        # Images have no text layer, so Gemini transcribes visible text and describes the content
+        return DocumentParser._result(file_path, "image", [{"text": read_image(file_path), "location": {}}])

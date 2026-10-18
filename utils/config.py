@@ -39,7 +39,7 @@ CLEANUP_INTERVAL_MINUTES = float(os.getenv("CLEANUP_INTERVAL_MINUTES", "60"))
 # --- Uploads ---
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "storage/uploads")
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "20"))
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".txt", ".md"}
+ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp"}
 
 # --- Security ---
 # When API_KEY is set, every /api/v1 request must send it in the X-API-Key header.

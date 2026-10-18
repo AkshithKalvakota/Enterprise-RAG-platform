@@ -105,8 +105,8 @@ with st.sidebar:
     st.header("📂 Document Management")
 
     uploaded_files = st.file_uploader(
-        "Upload Documents (PDF, DOCX, PPTX, XLSX, CSV, TXT)",
-        type=["pdf", "docx", "pptx", "xlsx", "csv", "txt", "md"],
+        "Upload Documents (PDF, DOCX, PPTX, XLSX, CSV, TXT, images)",
+        type=["pdf", "docx", "pptx", "xlsx", "csv", "txt", "md", "png", "jpg", "jpeg", "webp"],
         accept_multiple_files=True
     )
 

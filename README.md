@@ -28,6 +28,7 @@ Built with a decoupled microservice architecture, the platform separates a robus
 ## ✨ Key Features
 
 * **Multi-Format Ingestion:** Seamlessly parses PDF, DOCX, PPTX, XLSX, CSV, TXT, and Markdown files.
+* **Image Understanding:** PNG, JPG, and WebP images (screenshots, scanned pages, charts, diagrams) are read by Gemini, which transcribes visible text and describes the content, including chart values.
 * **Vector Intelligence:** Leverages Qdrant Cloud for high-performance, dense vector similarity search.
 * **Advanced LLM Integration:** Powered by Google's `gemini-3.5-flash-lite` (configurable via `LLM_MODEL`) for fast, grounded generation and `gemini-embedding-001` for semantic chunk mapping.
 * **Source Citations:** Every answer lists the files it used, down to the PDF page, slide, or Excel sheet.
@@ -49,7 +50,7 @@ The platform operates on a two-part asynchronous pipeline: **Ingestion** and **R
 ### 1. Document Ingestion Pipeline
 1. **Upload:** A user uploads business documents via the Streamlit frontend.
 2. **Transfer:** The frontend clears the session's previous documents, then sends the files to the FastAPI backend via the `/upload` endpoint (type and size are validated).
-3. **Parsing & Chunking:** The `document_parser.py` and `chunker.py` services extract text page by page (PDF), slide by slide (PPTX), and sheet by sheet (XLSX), including Word tables, and split it into overlapping chunks that remember their source and location.
+3. **Parsing & Chunking:** The `document_parser.py` and `chunker.py` services extract text page by page (PDF), slide by slide (PPTX), and sheet by sheet (XLSX), including Word tables; images are transcribed and described by Gemini Vision. The text is split into overlapping chunks that remember their source and location.
 4. **Embedding & Indexing:** The `vector_store.py` service embeds the chunks with Google's embedding model and stores them in Qdrant Cloud, tagged with the user's session ID.
 
 ### 2. Retrieval & Generation Pipeline
@@ -83,6 +84,8 @@ Enterprise-RAG-platform/
 ├── services/
 │   ├── chunker.py               # Semantic text chunking logic
 │   ├── document_parser.py       # Multi-format document loading and parsing
+│   ├── image_reader.py          # Gemini Vision: image -> text + description
+│   ├── llm.py                   # Shared Gemini model setup (primary + fallback)
 │   └── rag_engine.py            # LLM integration and retrieval chain logic
 │
 ├── utils/
@@ -108,7 +111,7 @@ The FastAPI backend exposes the following core endpoints. All endpoints except `
 |:--|:--:|:--|
 | `/api/v1/status` | `GET` | Health check, also used to wake the server. No API key needed. |
 | `/api/v1/health` | `GET` | Checks that Qdrant answers (used by the keep-alive workflow). No API key needed. |
-| `/api/v1/upload` | `POST` | Accepts multi-part form data and saves the session's documents (allowed types only, max 20 MB). |
+| `/api/v1/upload` | `POST` | Accepts multi-part form data and saves the session's documents (allowed types only, max 20 MB; images max 14 MB). |
 | `/api/v1/index/{filename}` | `POST` | Parses a saved document, chunks the text, and stores embeddings in Qdrant. |
 | `/api/v1/query` | `POST` | Accepts a question and chat history; returns `{"answer", "sources"}`. |
 | `/api/v1/query/stream` | `POST` | Same as `/query`, but streams the answer as NDJSON: `token` events, then one `done` event with the sources. Used by the frontend. |

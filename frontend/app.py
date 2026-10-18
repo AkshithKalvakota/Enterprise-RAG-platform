@@ -24,7 +24,7 @@ def _setting(name: str, default: str = "") -> str:
 # Backend API Configuration
 BACKEND_URL = _setting("BACKEND_URL", "https://enterprise-rag-assistant-6n3h.onrender.com").rstrip("/")
 API_BASE_URL = f"{BACKEND_URL}/api/v1"
-API_KEY = _setting("API_KEY")
+API_KEY = _setting("API_KEY").strip().strip("\"'")
 
 # Request timeouts in seconds (Render free tier can take ~60s to wake up)
 WAKE_TIMEOUT = 90

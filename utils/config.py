@@ -29,7 +29,8 @@ ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".txt", ".md"}
 # --- Security ---
 # When API_KEY is set, every /api/v1 request must send it in the X-API-Key header.
 # Leave it empty only for local development.
-API_KEY = os.getenv("API_KEY", "")
+# Stray spaces/quotes from pasting into a hosting dashboard are ignored.
+API_KEY = os.getenv("API_KEY", "").strip().strip("\"'")
 # Requests allowed per session, e.g. "30/minute"
 RATE_LIMIT = os.getenv("RATE_LIMIT", "30/minute")
 # Comma-separated browser origins allowed to call the API (Streamlit calls it server-side,

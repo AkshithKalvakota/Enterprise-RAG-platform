@@ -251,6 +251,8 @@ if prompt := st.chat_input("Ask a question about your documents..."):
                     ]
                 elif response.status_code == 429:
                     st.error("⏳ Too many questions in a short time. Please wait a minute and try again.")
+                elif response.status_code == 503:
+                    st.warning(f"⏳ {error_detail(response)}")
                 else:
                     st.error(f"🚨 Error from backend: {error_detail(response)}")
 

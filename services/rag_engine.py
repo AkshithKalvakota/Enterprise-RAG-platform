@@ -45,18 +45,37 @@ def _split_sources(reply: str, chunk_sources: list) -> tuple:
     return reply.strip(), sources
 
 
+def _build_llm(model: str) -> ChatGoogleGenerativeAI:
+    return ChatGoogleGenerativeAI(
+        model=model,
+        # Gemini 3.x thinks before answering by default; "low" cuts latency a lot
+        # for document lookups. Options: minimal, low, medium, high.
+        thinking_level=config.LLM_THINKING_LEVEL,
+        # Fail fast so the fallback model can take over, instead of retrying for a minute
+        max_retries=config.LLM_MAX_ATTEMPTS,
+        timeout=config.LLM_TIMEOUT_SECONDS,
+    )
+
+
+def is_model_busy_error(error: Exception) -> bool:
+    """True for errors that mean "try again shortly": overloaded, quota exceeded, timeout."""
+    text = str(error).upper()
+    return any(marker in text for marker in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "TIMEOUT", "TIMED OUT", "DEADLINE"))
+
+
 class RAGEngine:
     """
     A service class that connects our vector database to the Gemini LLM
     and manages conversation history to answer user queries accurately.
     """
     def __init__(self, db: VectorDB):
-        self.llm = ChatGoogleGenerativeAI(
-            model=config.LLM_MODEL,
-            # Gemini 3.x thinks before answering by default; "low" cuts latency a lot
-            # for document lookups. Options: minimal, low, medium, high.
-            thinking_level=config.LLM_THINKING_LEVEL,
-        )
+        primary = _build_llm(config.LLM_MODEL)
+        # If the primary model is overloaded (503), out of quota (429) or times out,
+        # the same request is sent to the fallback model instead of failing.
+        if config.LLM_FALLBACK_MODEL and config.LLM_FALLBACK_MODEL != config.LLM_MODEL:
+            self.llm = primary.with_fallbacks([_build_llm(config.LLM_FALLBACK_MODEL)])
+        else:
+            self.llm = primary
         self.db = db
 
     def _standalone_question(self, question: str, history: list) -> str:

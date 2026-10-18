@@ -6,6 +6,7 @@ from typing import List, Dict, Any
 
 from services.document_parser import DocumentParser
 from services.chunker import TextChunker
+from services.rag_engine import is_model_busy_error
 from backend.dependencies import get_vector_db, get_rag_engine
 from backend.security import get_session_id, rate_limit, require_api_key
 from utils import config
@@ -151,6 +152,12 @@ def query_knowledge_base(payload: QueryRequest, session_id: str = Depends(get_se
             top_k=payload.top_k,
         )
     except Exception as e:
+        if is_model_busy_error(e):
+            # Both the primary and fallback models were busy: tell the user to retry, not a stack of API errors
+            raise HTTPException(
+                status_code=503,
+                detail="The AI model is busy right now. Please try again in a few seconds.",
+            )
         raise HTTPException(status_code=500, detail=f"Error querying knowledge base: {str(e)}")
 
 @router.delete("/session", tags=["Document Processing"])

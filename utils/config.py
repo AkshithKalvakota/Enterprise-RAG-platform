@@ -9,6 +9,13 @@ load_dotenv()
 # --- Models ---
 LLM_MODEL = os.getenv("LLM_MODEL", "gemini-3.5-flash-lite")
 LLM_THINKING_LEVEL = os.getenv("LLM_THINKING_LEVEL", "low")
+# Used automatically when LLM_MODEL fails (overloaded, quota exceeded, timeout).
+# A different model has its own quota and load. Set to "" to disable.
+LLM_FALLBACK_MODEL = os.getenv("LLM_FALLBACK_MODEL", "gemini-3.1-flash-lite")
+# Each model gets this many attempts in total (1 = no retry) and this many seconds per attempt.
+# The Google SDK default is 6 attempts with backoff, which made users wait ~65s before an error.
+LLM_MAX_ATTEMPTS = int(os.getenv("LLM_MAX_ATTEMPTS", "2"))
+LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "models/gemini-embedding-001")
 
 # --- Vector store ---

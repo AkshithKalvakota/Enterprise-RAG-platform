@@ -1,3 +1,8 @@
+import truststore
+
+# Use the operating system's certificate store for HTTPS (fixes antivirus HTTPS scanning locally)
+truststore.inject_into_ssl()
+
 import streamlit as st
 import requests
 import time

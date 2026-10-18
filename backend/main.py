@@ -1,3 +1,9 @@
+import truststore
+
+# Use the operating system's certificate store for HTTPS. Without this, local runs
+# fail on PCs whose antivirus scans HTTPS (e.g. Avast) with CERTIFICATE_VERIFY_FAILED.
+truststore.inject_into_ssl()
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv

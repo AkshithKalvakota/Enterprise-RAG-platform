@@ -34,6 +34,9 @@ Built with a decoupled microservice architecture, the platform separates a robus
 * **Memory-Aware Chat:** Follow-up questions ("what about her department?") are rewritten using the chat history before searching.
 * **Per-Session Isolation:** Each browser session only sees and deletes its own documents.
 * **Secured API:** API-key authentication, per-session rate limiting, upload validation, and prompt-injection guarding.
+* **Streaming Answers:** Responses appear word by word as Gemini writes them.
+* **Resilient to Model Overload:** Busy or rate-limited Gemini calls are retried, and answers fall back to a second model.
+* **Automatic Cleanup:** Documents from abandoned sessions are deleted after 24 hours.
 * **Decoupled Architecture:** Clean separation of concerns between the frontend UI and the backend ingestion/inference engine.
 * **Cloud Native:** Fully deployed to the cloud using Render (Backend) and Streamlit Community Cloud (Frontend).
 
@@ -67,6 +70,7 @@ Enterprise-RAG-platform/
 │   ├── main.py                 # FastAPI application entry point
 │   ├── routes.py               # API endpoint definitions (/upload, /index, /query, /session)
 │   ├── security.py             # API-key check, session-ID validation, rate limiting
+│   ├── cleanup.py              # Hourly deletion of abandoned sessions
 │   └── dependencies.py         # Shared Qdrant/Gemini clients, created once
 │
 ├── database/
@@ -83,6 +87,7 @@ Enterprise-RAG-platform/
 │
 ├── utils/
 │   ├── config.py                # All settings, read from environment variables
+│   ├── retry.py                 # Retry-with-backoff for busy Gemini calls
 │   └── logger.py                # Application-wide logging configuration
 │
 ├── .env.example                 # Example environment variable file
@@ -102,9 +107,11 @@ The FastAPI backend exposes the following core endpoints. All endpoints except `
 | Endpoint | Method | Description |
 |:--|:--:|:--|
 | `/api/v1/status` | `GET` | Health check, also used to wake the server. No API key needed. |
+| `/api/v1/health` | `GET` | Checks that Qdrant answers (used by the keep-alive workflow). No API key needed. |
 | `/api/v1/upload` | `POST` | Accepts multi-part form data and saves the session's documents (allowed types only, max 20 MB). |
 | `/api/v1/index/{filename}` | `POST` | Parses a saved document, chunks the text, and stores embeddings in Qdrant. |
 | `/api/v1/query` | `POST` | Accepts a question and chat history; returns `{"answer", "sources"}`. |
+| `/api/v1/query/stream` | `POST` | Same as `/query`, but streams the answer as NDJSON: `token` events, then one `done` event with the sources. Used by the frontend. |
 | `/api/v1/session` | `DELETE` | Deletes the session's indexed chunks and uploaded files. |
 | `/docs` | `GET` | Auto-generated interactive Swagger UI for API testing. |
 

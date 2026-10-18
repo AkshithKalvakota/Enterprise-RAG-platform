@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 
 from backend.routes import public_router, router as api_router
+from backend.cleanup import start_cleanup_thread
 from backend.dependencies import get_vector_db
 from utils import config
 from utils.logger import setup_logger
@@ -38,6 +39,8 @@ def warm_up_clients():
         logger.info("Successfully connected to Qdrant.")
     except Exception as e:
         logger.error(f"Warning: Could not connect to Qdrant on startup. {e}")
+    # Delete documents from abandoned sessions, now and periodically
+    start_cleanup_thread()
 
 
 # ==========================================

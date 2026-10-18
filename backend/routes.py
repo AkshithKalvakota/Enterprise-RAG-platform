@@ -1,12 +1,15 @@
 import os
 import shutil
+import time
+import json
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any
 
 from services.document_parser import DocumentParser
 from services.chunker import TextChunker
-from services.rag_engine import is_model_busy_error
+from utils.retry import is_model_busy_error
 from backend.dependencies import get_vector_db, get_rag_engine
 from backend.security import get_session_id, rate_limit, require_api_key
 from utils import config
@@ -15,6 +18,8 @@ from utils import config
 # Both are rate limited per session.
 public_router = APIRouter(dependencies=[Depends(rate_limit)])
 router = APIRouter(dependencies=[Depends(rate_limit), Depends(require_api_key)])
+
+BUSY_MESSAGE = "The AI model is busy right now. Please try again in a few seconds."
 
 # Define the request payload models
 class QueryRequest(BaseModel):
@@ -121,9 +126,14 @@ def chunk_document(filename: str, session_id: str = Depends(get_session_id)):
 def index_document(filename: str, session_id: str = Depends(get_session_id)):
     file_path = _session_file(session_id, filename)
     try:
-        # Parse and chunk the text; every chunk is tagged with its source file and session
+        # Parse and chunk the text; every chunk is tagged with its source file, session,
+        # and indexing time (used to delete abandoned sessions after SESSION_TTL_HOURS)
         parsed_data = DocumentParser.parse(file_path)
-        base_metadata = {"source": parsed_data["metadata"]["source"], "session_id": session_id}
+        base_metadata = {
+            "source": parsed_data["metadata"]["source"],
+            "session_id": session_id,
+            "indexed_at": time.time(),
+        }
         chunks = TextChunker.split_segments(parsed_data["segments"], base_metadata)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error parsing document: {str(e)}")
@@ -140,6 +150,12 @@ def index_document(filename: str, session_id: str = Depends(get_session_id)):
         get_vector_db().add_documents(chunks)
         return {"message": f"Successfully indexed {filename} into vector database.", "chunks_indexed": len(chunks)}
     except Exception as e:
+        if is_model_busy_error(e):
+            # Still busy after all embedding retries
+            raise HTTPException(
+                status_code=503,
+                detail=f"The AI service is busy, so {filename} could not be indexed. Please try again in a minute.",
+            )
         raise HTTPException(status_code=500, detail=f"Error indexing document: {str(e)}")
 
 @router.post("/query", tags=["AI Pipeline"])
@@ -156,9 +172,40 @@ def query_knowledge_base(payload: QueryRequest, session_id: str = Depends(get_se
             # Both the primary and fallback models were busy: tell the user to retry, not a stack of API errors
             raise HTTPException(
                 status_code=503,
-                detail="The AI model is busy right now. Please try again in a few seconds.",
+                detail=BUSY_MESSAGE,
             )
         raise HTTPException(status_code=500, detail=f"Error querying knowledge base: {str(e)}")
+
+@router.post("/query/stream", tags=["AI Pipeline"])
+def stream_knowledge_base(payload: QueryRequest, session_id: str = Depends(get_session_id)):
+    """
+    Like /query, but streams the answer as it is written. The response is NDJSON
+    (one JSON object per line): {"type": "token", "text"} pieces, then one
+    {"type": "done", "answer", "sources"} event, or {"type": "error", "detail"} if generation fails.
+    """
+    try:
+        # Retrieval happens here, so its errors are normal HTTP errors
+        events = get_rag_engine().stream(
+            question=payload.question,
+            session_id=session_id,
+            chat_history=payload.chat_history,
+            top_k=payload.top_k,
+        )
+    except Exception as e:
+        if is_model_busy_error(e):
+            raise HTTPException(status_code=503, detail=BUSY_MESSAGE)
+        raise HTTPException(status_code=500, detail=f"Error querying knowledge base: {str(e)}")
+
+    def ndjson():
+        try:
+            for event in events:
+                yield json.dumps(event) + "\n"
+        except Exception as e:
+            # The 200 status is already sent once streaming starts, so report the failure in-band
+            detail = BUSY_MESSAGE if is_model_busy_error(e) else f"Error generating answer: {str(e)}"
+            yield json.dumps({"type": "error", "detail": detail}) + "\n"
+
+    return StreamingResponse(ndjson(), media_type="application/x-ndjson")
 
 @router.delete("/session", tags=["Document Processing"])
 def clear_session(session_id: str = Depends(get_session_id)):

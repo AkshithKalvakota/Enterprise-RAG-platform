@@ -8,6 +8,7 @@ NO_DOCUMENTS_MESSAGE = "Please upload and index your documents first."
 LOCATION_KEYS = ("page", "slide", "sheet")
 # Matches the "SOURCES: 1, 3" line the model is asked to end its reply with
 SOURCES_LINE = re.compile(r"\n?\s*SOURCES:\s*(.*)\s*$", re.IGNORECASE)
+SOURCES_MARKER = "SOURCES:"
 
 
 def _message_text(response) -> str:
@@ -23,6 +24,20 @@ def _format_location(metadata: dict) -> str:
         if key in metadata:
             return f"{key} {metadata[key]}"
     return ""
+
+
+def _visible_length(text: str) -> int:
+    """
+    How much of a partially streamed reply can be shown: everything before the
+    "SOURCES:" line, holding back a tail that might be the start of it ("\\nSOU...").
+    """
+    marker_at = text.find(SOURCES_MARKER)
+    if marker_at != -1:
+        return len(text[:marker_at].rstrip())
+    for size in range(min(len(SOURCES_MARKER) - 1, len(text)), 0, -1):
+        if SOURCES_MARKER.startswith(text[-size:]):
+            return len(text[:-size].rstrip())
+    return len(text.rstrip())
 
 
 def _split_sources(reply: str, chunk_sources: list) -> tuple:
@@ -55,12 +70,6 @@ def _build_llm(model: str) -> ChatGoogleGenerativeAI:
         max_retries=config.LLM_MAX_ATTEMPTS,
         timeout=config.LLM_TIMEOUT_SECONDS,
     )
-
-
-def is_model_busy_error(error: Exception) -> bool:
-    """True for errors that mean "try again shortly": overloaded, quota exceeded, timeout."""
-    text = str(error).upper()
-    return any(marker in text for marker in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "TIMEOUT", "TIMED OUT", "DEADLINE"))
 
 
 class RAGEngine:
@@ -103,8 +112,55 @@ class RAGEngine:
         session's documents, and generates a grounded answer with its sources.
         Returns {"answer": str, "sources": [{"source": ..., "location": ...}]}.
         """
-        if not self.db.has_documents(session_id):
+        prepared = self._prepare(question, session_id, chat_history, top_k)
+        if prepared is None:
             return {"answer": NO_DOCUMENTS_MESSAGE, "sources": []}
+
+        messages, chunk_sources = prepared
+        answer, sources = _split_sources(_message_text(self.llm.invoke(messages)), chunk_sources)
+        return {"answer": answer, "sources": sources}
+
+    def stream(self, question: str, session_id: str, chat_history: list = None, top_k: int = config.DEFAULT_TOP_K):
+        """
+        Same as query(), but the answer arrives piece by piece. Retrieval runs right away
+        (so its errors surface before streaming starts); returns a generator of events:
+            {"type": "token", "text": "..."}       - repeated, the answer as it is written
+            {"type": "done", "answer": "...", "sources": [...]}  - last event
+        """
+        prepared = self._prepare(question, session_id, chat_history, top_k)
+        if prepared is None:
+            def no_documents():
+                yield {"type": "token", "text": NO_DOCUMENTS_MESSAGE}
+                yield {"type": "done", "answer": NO_DOCUMENTS_MESSAGE, "sources": []}
+            return no_documents()
+
+        messages, chunk_sources = prepared
+
+        def events():
+            full_text = ""
+            sent = 0
+            for chunk in self.llm.stream(messages):
+                full_text += _message_text(chunk)
+                # Never show the trailing "SOURCES: 1, 3" line while it is being written
+                visible = _visible_length(full_text)
+                if visible > sent:
+                    yield {"type": "token", "text": full_text[sent:visible]}
+                    sent = visible
+
+            answer, sources = _split_sources(full_text, chunk_sources)
+            if len(answer) > sent:
+                yield {"type": "token", "text": answer[sent:]}
+            yield {"type": "done", "answer": answer, "sources": sources}
+
+        return events()
+
+    def _prepare(self, question: str, session_id: str, chat_history: list, top_k: int):
+        """
+        Retrieves this session's relevant chunks and builds the prompt.
+        Returns (messages, chunk_sources), or None when the session has no documents.
+        """
+        if not self.db.has_documents(session_id):
+            return None
 
         # Only recent, well-formed messages are used, so prompts don't grow forever
         history = [
@@ -152,8 +208,6 @@ class RAGEngine:
             else:
                 formatted_history.append(AIMessage(content=msg["content"]))
 
-        # 4. Construct the final prompt with history and call Gemini
+        # 4. Construct the final prompt with history
         messages = [SystemMessage(content=system_prompt)] + formatted_history + [HumanMessage(content=question)]
-        answer, sources = _split_sources(_message_text(self.llm.invoke(messages)), chunk_sources)
-
-        return {"answer": answer, "sources": sources}
+        return messages, chunk_sources

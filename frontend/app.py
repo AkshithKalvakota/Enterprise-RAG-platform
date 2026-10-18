@@ -3,6 +3,7 @@ import truststore
 # Use the operating system's certificate store for HTTPS (fixes antivirus HTTPS scanning locally)
 truststore.inject_into_ssl()
 
+import json
 import os
 import time
 import uuid
@@ -217,44 +218,61 @@ if prompt := st.chat_input("Ask a question about your documents..."):
     # 2. Save user's prompt to memory without using .append()
     st.session_state.messages = st.session_state.messages + [{"role": "user", "content": prompt}]
 
-    # 3. Call the FastAPI /query endpoint with sanitized chat history
+    # 3. Call the FastAPI /query/stream endpoint with sanitized chat history
     with st.chat_message("assistant"):
-        with st.spinner("🤖 Analyzing documents and generating response..."):
-            try:
-                clean_history = [
-                    {"role": msg["role"], "content": str(msg["content"])}
-                    for msg in st.session_state.messages[:-1]
-                ]
+        try:
+            clean_history = [
+                {"role": msg["role"], "content": str(msg["content"])}
+                for msg in st.session_state.messages[:-1]
+            ]
 
-                payload = {
-                    "question": prompt,
-                    "chat_history": clean_history,
-                    "top_k": 5
-                }
+            payload = {
+                "question": prompt,
+                "chat_history": clean_history,
+                "top_k": 5
+            }
 
+            # The spinner covers retrieval; it disappears once the answer starts arriving
+            with st.spinner("🤖 Analyzing documents..."):
                 response = requests.post(
-                    f"{API_BASE_URL}/query", json=payload, headers=api_headers(), timeout=QUERY_TIMEOUT
+                    f"{API_BASE_URL}/query/stream", json=payload, headers=api_headers(),
+                    timeout=QUERY_TIMEOUT, stream=True,
                 )
 
-                if response.status_code == 200:
-                    data = response.json()
-                    ai_answer = data.get("answer", "No answer returned.")
-                    sources = data.get("sources", [])
+            if response.status_code == 200:
+                result = {}
 
-                    st.markdown(ai_answer)
+                def answer_pieces():
+                    # One JSON event per line: "token" pieces, then "done" (or "error")
+                    for line in response.iter_lines(chunk_size=None):
+                        if not line:
+                            continue
+                        event = json.loads(line.decode("utf-8"))
+                        if event["type"] == "token":
+                            yield event["text"]
+                        else:
+                            result.update(event)
+
+                # 4. Show the answer as it is written
+                st.write_stream(answer_pieces())
+
+                if result.get("type") == "error":
+                    st.warning(f"⏳ {result['detail']}")
+                else:
+                    sources = result.get("sources", [])
                     if sources:
                         st.caption(format_sources(sources))
 
-                    # 4. Save assistant response to memory without using .append()
+                    # 5. Save assistant response to memory without using .append()
                     st.session_state.messages = st.session_state.messages + [
-                        {"role": "assistant", "content": ai_answer, "sources": sources}
+                        {"role": "assistant", "content": result.get("answer", ""), "sources": sources}
                     ]
-                elif response.status_code == 429:
-                    st.error("⏳ Too many questions in a short time. Please wait a minute and try again.")
-                elif response.status_code == 503:
-                    st.warning(f"⏳ {error_detail(response)}")
-                else:
-                    st.error(f"🚨 Error from backend: {error_detail(response)}")
+            elif response.status_code == 429:
+                st.error("⏳ Too many questions in a short time. Please wait a minute and try again.")
+            elif response.status_code == 503:
+                st.warning(f"⏳ {error_detail(response)}")
+            else:
+                st.error(f"🚨 Error from backend: {error_detail(response)}")
 
-            except CONNECTION_ERRORS:
-                st.error("🔌 Cannot connect to the backend server. It may be waking up; please try again in a minute.")
+        except CONNECTION_ERRORS:
+            st.error("🔌 Cannot connect to the backend server. It may be waking up; please try again in a minute.")

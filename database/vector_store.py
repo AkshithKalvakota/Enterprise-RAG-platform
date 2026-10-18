@@ -1,27 +1,35 @@
 import os
-from dotenv import load_dotenv
 from langchain_qdrant import QdrantVectorStore
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from qdrant_client import QdrantClient
-from qdrant_client.http.models import Distance, Filter, FilterSelector, VectorParams
+from qdrant_client.http.models import (
+    Distance,
+    FieldCondition,
+    Filter,
+    FilterSelector,
+    MatchValue,
+    PayloadSchemaType,
+    VectorParams,
+)
 
-load_dotenv()
+from utils import config
 
 # gemini-embedding-001 returns 3072-dimensional vectors by default
 EMBEDDING_DIM = 3072
+
+# LangChain stores each chunk's metadata under the "metadata" payload key
+SESSION_FIELD = "metadata.session_id"
 
 
 class VectorDB:
     """
     Manages vector embeddings and connection to Qdrant (supports both local and cloud).
     Create it once and reuse it: building the clients is slow.
+    Every chunk is tagged with a session_id, and every search/delete is scoped to one session.
     """
     def __init__(self):
-        self.embeddings = GoogleGenerativeAIEmbeddings(
-            model="models/gemini-embedding-001"
-        )
-        # Single source of truth for the collection name (used by /reset too)
-        self.collection_name = os.getenv("COLLECTION_NAME", "enterprise_rag_docs")
+        self.embeddings = GoogleGenerativeAIEmbeddings(model=config.EMBEDDING_MODEL)
+        self.collection_name = config.COLLECTION_NAME
 
         # Check if Qdrant Cloud credentials are provided in environment variables
         qdrant_url = os.getenv("QDRANT_URL")
@@ -58,19 +66,35 @@ class VectorDB:
                 collection_name=self.collection_name,
                 vectors_config=VectorParams(size=EMBEDDING_DIM, distance=Distance.COSINE),
             )
+        # Index the session field so filtered searches stay fast (no-op if it exists;
+        # local mode ignores payload indexes)
+        self.client.create_payload_index(
+            collection_name=self.collection_name,
+            field_name=SESSION_FIELD,
+            field_schema=PayloadSchemaType.KEYWORD,
+        )
+
+    @staticmethod
+    def _session_filter(session_id: str) -> Filter:
+        return Filter(must=[FieldCondition(key=SESSION_FIELD, match=MatchValue(value=session_id))])
 
     def add_documents(self, chunks: list):
         return self.store.add_documents(chunks)
 
-    def search(self, query: str, top_k: int = 5) -> list:
-        return self.store.similarity_search(query, k=top_k)
+    def search(self, query: str, session_id: str, top_k: int = config.DEFAULT_TOP_K) -> list:
+        return self.store.similarity_search(query, k=top_k, filter=self._session_filter(session_id))
 
-    def reset(self):
-        """Deletes every stored chunk but keeps the collection itself."""
-        # An empty filter matches every point. Deleting points (instead of dropping the
-        # collection) also works in local mode, where Windows keeps the old files locked.
+    def has_documents(self, session_id: str) -> bool:
+        return self.client.count(
+            collection_name=self.collection_name,
+            count_filter=self._session_filter(session_id),
+            exact=False,
+        ).count > 0
+
+    def delete_session(self, session_id: str):
+        """Deletes every chunk belonging to one session; other sessions are untouched."""
         self.client.delete(
             collection_name=self.collection_name,
-            points_selector=FilterSelector(filter=Filter()),
+            points_selector=FilterSelector(filter=self._session_filter(session_id)),
             wait=True,
         )

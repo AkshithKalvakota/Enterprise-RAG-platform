@@ -1,26 +1,37 @@
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from utils import config
+
 class TextChunker:
     """
-    A service class responsible for breaking down large blocks of text 
+    A service class responsible for breaking down large blocks of text
     into smaller, overlapping chunks for accurate AI retrieval.
     """
-    
+
+    @staticmethod
+    def _splitter() -> RecursiveCharacterTextSplitter:
+        return RecursiveCharacterTextSplitter(
+            chunk_size=config.CHUNK_SIZE,
+            chunk_overlap=config.CHUNK_OVERLAP,
+            separators=["\n\n", "\n", " ", ""]
+        )
+
     @staticmethod
     def split_text(text: str) -> list:
         """
-        Splits raw text into 1000-character chunks with a 200-character overlap.
+        Splits raw text into overlapping chunks (sizes come from config).
         Returns a list of LangChain Document objects.
         """
-        # Define our chunking strategy
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
-            separators=["\n\n", "\n", " ", ""]
-        )
-        
-        # create_documents returns a list of Document objects 
-        # which have .page_content and .metadata attributes
-        chunks = text_splitter.create_documents([text])
-        
-        return chunks
+        return TextChunker._splitter().create_documents([text])
+
+    @staticmethod
+    def split_segments(segments: list, base_metadata: dict) -> list:
+        """
+        Splits parser segments into chunks. Each chunk carries base_metadata
+        (source, session_id, ...) plus its segment's location (page, slide or sheet),
+        which is what lets answers cite where they came from.
+        """
+        texts = [segment["text"] for segment in segments]
+        metadatas = [{**base_metadata, **segment["location"]} for segment in segments]
+        chunks = TextChunker._splitter().create_documents(texts, metadatas=metadatas)
+        return [chunk for chunk in chunks if chunk.page_content.strip()]

@@ -5,11 +5,13 @@ import truststore
 truststore.inject_into_ssl()
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 
-from backend.routes import router as api_router
+from backend.routes import public_router, router as api_router
 from backend.dependencies import get_vector_db
+from utils import config
 from utils.logger import setup_logger
 
 # Load environment variables
@@ -20,7 +22,7 @@ logger = setup_logger()
 
 app = FastAPI(
     title="Enterprise RAG API",
-    version="1.0.0",
+    version="2.0.0",
     description="A robust backend for document parsing, vector embedding, and LLM generation."
 )
 
@@ -29,6 +31,8 @@ app = FastAPI(
 # ==========================================
 @app.on_event("startup")
 def warm_up_clients():
+    if not config.API_KEY:
+        logger.warning("API_KEY is not set: the API is open to anyone. Set it in production.")
     try:
         get_vector_db()
         logger.info("Successfully connected to Qdrant.")
@@ -53,42 +57,36 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 
 # ==========================================
-# 2. Middleware (The Request Tracker)
+# 2. Middleware (CORS, Request Tracker)
+# Rate limiting is a route dependency (see backend/security.py)
 # ==========================================
+# Only listed browser origins may call the API from JavaScript
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=config.ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["X-API-Key", "X-Session-ID", "Content-Type"],
+)
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     """
-    Intercepts every HTTP request, logs the incoming action, 
+    Intercepts every HTTP request, logs the incoming action,
     processes the request, and logs the final status code.
     """
     logger.info(f"Incoming Request: {request.method} {request.url.path}")
-    
+
     # Process the request
     response = await call_next(request)
-    
+
     logger.info(f"Completed Request: {request.method} {request.url.path} with status code {response.status_code}")
     return response
 
 
 # ==========================================
-# 3. Database Reset Route
-# ==========================================
-@app.delete("/reset")
-def reset_database():
-    """Wipes the Qdrant collection and recreates an empty one."""
-    try:
-        # Uses the same VectorDB (and collection name) that indexing and search use
-        db = get_vector_db()
-        db.reset()
-
-        logger.info(f"Database collection '{db.collection_name}' successfully cleared and recreated.")
-        return {"message": "Database cleared successfully"}
-    except Exception as e:
-        logger.error(f"Failed to reset database: {str(e)}")
-        return {"error": str(e)}
-
-
-# ==========================================
 # Register our API routes
 # ==========================================
+# The old global DELETE /reset is gone: it let anyone wipe every user's documents.
+# Each user now clears only their own documents with DELETE /api/v1/session.
+app.include_router(public_router, prefix="/api/v1")
 app.include_router(api_router, prefix="/api/v1")

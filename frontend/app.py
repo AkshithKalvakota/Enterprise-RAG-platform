@@ -77,6 +77,11 @@ def clear_session_documents():
     response.raise_for_status()
 
 
+def keep_line_breaks(text: str) -> str:
+    """Markdown joins single newlines into one line; two trailing spaces force a line break."""
+    return text.replace("\n", "  \n")
+
+
 def format_sources(sources: list) -> str:
     labels = [f"{s['source']} ({s['location']})" if s.get("location") else s["source"] for s in sources]
     return "📄 Sources: " + " · ".join(labels)
@@ -205,7 +210,7 @@ if "messages" not in st.session_state or len(st.session_state.messages) == 0:
 # Display all previous messages in the chat
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+        st.markdown(keep_line_breaks(message["content"]))
         if message.get("sources"):
             st.caption(format_sources(message["sources"]))
 
@@ -249,7 +254,7 @@ if prompt := st.chat_input("Ask a question about your documents..."):
                             continue
                         event = json.loads(line.decode("utf-8"))
                         if event["type"] == "token":
-                            yield event["text"]
+                            yield keep_line_breaks(event["text"])
                         else:
                             result.update(event)
 
